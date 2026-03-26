@@ -282,15 +282,15 @@ class DazhongdianpAutoSignup:
 
     def _load_templates(self) -> None:
         """加载图像模板（OpenCV 格式）"""
-        template_files = {
+        # 必选模板
+        required_files = {
             "free_lottery": "free_lottery.png",
             "signup_btn": "signup_btn.png",
             "confirm_btn": "confirm_btn.png",
             "view_more": "view_more.png",
-            "success_hint": "success_hint.png",
         }
 
-        for key, filename in template_files.items():
+        for key, filename in required_files.items():
             template_path = self.template_dir / filename
             if template_path.exists():
                 # 使用 OpenCV 读取模板
@@ -301,7 +301,15 @@ class DazhongdianpAutoSignup:
                 else:
                     logger.error(f"无法读取模板文件：{filename}")
             else:
-                logger.warning(f"模板文件不存在：{filename}")
+                logger.error(f"缺少必要的模板文件：{filename}")
+
+        # 可选模板（success_hint.png）- 如果存在则加载
+        optional_template = self.template_dir / "success_hint.png"
+        if optional_template.exists():
+            template = cv2.imread(str(optional_template))
+            if template is not None:
+                self.templates["success_hint"] = template
+                logger.info(f"已加载可选模板：success_hint.png")
 
     def _check_templates(self) -> bool:
         """检查必要的模板是否都已加载"""

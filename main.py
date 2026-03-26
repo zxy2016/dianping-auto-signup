@@ -427,34 +427,6 @@ class DazhongdianpAutoSignup:
         human_like_scroll(swipe_x, swipe_y, scroll_amount=random.randint(3, 6))
         time.sleep(0.5)
 
-    def _scroll_to_signup_btn(self) -> None:
-        """
-        向下滚动页面，查找"我要报名"按钮
-        详情页的报名按钮通常在页面底部，需要滚动才能看到
-        """
-        screen_height = pyautogui.size()[1]
-        # 将鼠标移到 iPhone 窗口左侧边缘（避免误触页面元素）
-        swipe_x = 50  # 更靠左，确保在窗口边缘
-        swipe_y = int(screen_height * 0.5)
-
-        logger.info("向下滚动页面，查找'我要报名'按钮...")
-
-        # 先移动到滚动位置，不点击
-        pyautogui.moveTo(swipe_x, swipe_y, duration=0.3)
-        time.sleep(0.2)
-
-        # 向下滚动 2-3 次，每次滚动 15-25 个单位
-        scroll_rounds = random.randint(2, 3)
-        for round in range(scroll_rounds):
-            scroll_amount = random.randint(15, 25)
-            # 负数表示向下滚动（页面向上移动，显示下方内容）
-            pyautogui.scroll(-scroll_amount)
-            time.sleep(random.uniform(0.2, 0.4))
-
-        # 等待页面加载
-        time.sleep(1.0)
-        logger.info("滚动完成")
-
     def _is_on_free_meal_page(self) -> bool:
         """检查是否在霸王餐列表页"""
         return self._find_element("free_lottery", timeout=3.0) is not None
@@ -496,10 +468,6 @@ class DazhongdianpAutoSignup:
             logger.error("未找到'免费抽'按钮")
             return False
 
-        # 记录点击位置，用于后续检测
-        clicked_pos = free_lottery_pos
-        logger.info(f"准备点击'免费抽'，位置：{clicked_pos}")
-
         # 执行点击（转换为逻辑坐标）
         logical_x, logical_y = convert_to_logical_coords(free_lottery_pos[0], free_lottery_pos[1])
         logger.info(f"点击 free_lottery，原始坐标：{free_lottery_pos}，逻辑坐标：({logical_x}, {logical_y})")
@@ -520,39 +488,10 @@ class DazhongdianpAutoSignup:
             logger.info("非第一个商品，执行单击...")
             human_like_click(logical_x, logical_y)
 
-        # 点击后将鼠标移到安全位置（iPhone 窗口外右侧），避免误触
-        safe_x = logical_x + 500  # 向右移更多，确保移到 iPhone 窗口外
-        safe_y = logical_y
-        pyautogui.moveTo(safe_x, safe_y, duration=0.5)
-        # 等待页面加载完成后再继续
-        time.sleep(2.0)
-
-        # 步骤 2: 等待进入详情页（增加等待时间）
-        logger.info("等待页面加载...")
+        # 等待页面加载完成
         time.sleep(3.0)
 
-        # 步骤 2.5: 截取当前屏幕，调试用
-        debug_screenshot = pyautogui.screenshot()
-        debug_screenshot.save('debug_after_click.png')
-        logger.info("已保存点击后截图：debug_after_click.png")
-
-        # 检查是否还在列表页（可能点击失败或遇到风控）
-        # 使用较短的超时时间来检测
-        still_on_list = self._find_element("free_lottery", timeout=2.0)
-        if still_on_list:
-            # 检查是否是相同位置（真正点击失败）
-            if still_on_list == clicked_pos:
-                logger.warning(f"点击'免费抽'后仍在原位置 {clicked_pos}，点击未生效")
-                pyautogui.press('esc')
-                time.sleep(1.0)
-                return False
-            else:
-                logger.info("检测到不同的'免费抽'按钮，可能已滚动，继续")
-
-        # 步骤 2.6: 向下滚动页面，查找"我要报名"按钮
-        self._scroll_to_signup_btn()
-
-        # 步骤 3: 点击"我要报名"（使用更高的阈值避免误匹配）
+        # 步骤 3: 点击"我要报名"（详情页默认可见，无需滚动）
         if not self._click_element("signup_btn", timeout=5.0):
             logger.error("未找到'我要报名'按钮")
             self._go_back_to_list()

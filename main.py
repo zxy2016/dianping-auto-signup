@@ -8,6 +8,7 @@
 import logging
 import time
 from pathlib import Path
+from typing import Optional
 
 import cv2
 import numpy as np
@@ -232,18 +233,18 @@ def human_like_scroll(scroll_x, scroll_y, scroll_amount):
     拟人化滚动 - 分多次滚动，每次随机量
     """
     # 先移动到滚动区域
-    human_like_move(scroll_x, scroll_y, duration=0.3)
-    time.sleep(random.uniform(0.1, 0.2))
+    human_like_move(scroll_x, scroll_y, duration=random.uniform(0.18, 0.28))
+    time.sleep(random.uniform(0.04, 0.08))
 
     # 分多次滚动
     remaining = scroll_amount
     while remaining > 0:
-        step = random.randint(1, 4)
+        step = random.randint(8, 14)
         if step > remaining:
             step = remaining
         pyautogui.scroll(-step)
         remaining -= step
-        time.sleep(random.uniform(0.05, 0.15))
+        time.sleep(random.uniform(0.01, 0.04))
 
 
 class DazhongdianpAutoSignup:
@@ -261,6 +262,7 @@ class DazhongdianpAutoSignup:
         self.signup_count = 0
         self.failed_count = 0
         self.mirror_window = None
+        self.screen_width, self.screen_height = pyautogui.size()
 
         # 加载所有模板
         self._load_templates()
@@ -322,7 +324,96 @@ class DazhongdianpAutoSignup:
             return False
         return True
 
-    def _find_element(self, template_key: str, timeout: float = 5.0, threshold: float = 0.6) -> tuple | None:
+    def _build_search_region(self, template_key: str) -> Optional[tuple[int, int, int, int]]:
+        """为常用按钮构造优先搜索区域，减少整屏匹配开销。"""
+        width = int(self.screen_width * SCREEN_SCALE)
+        height = int(self.screen_height * SCREEN_SCALE)
+
+        regions = {
+            "free_lottery": (
+                int(width * 0.42),
+                int(height * 0.14),
+                int(width * 0.50),
+                int(height * 0.72),
+            ),
+            "signup_btn": (
+                int(width * 0.20),
+                int(height * 0.58),
+                int(width * 0.60),
+                int(height * 0.26),
+            ),
+            "confirm_btn": (
+                int(width * 0.20),
+                int(height * 0.50),
+                int(width * 0.60),
+                int(height * 0.34),
+            ),
+            "view_more": (
+                int(width * 0.10),
+                int(height * 0.62),
+                int(width * 0.75),
+                int(height * 0.28),
+            ),
+            "success_hint": (
+                int(width * 0.10),
+                int(height * 0.35),
+                int(width * 0.75),
+                int(height * 0.28),
+            ),
+        }
+        return regions.get(template_key)
+
+    def _match_template(
+        self,
+        screenshot_cv: np.ndarray,
+        template_key: str,
+        threshold: float = 0.6,
+        region: Optional[tuple[int, int, int, int]] = None,
+    ) -> tuple | None:
+        """在截图中匹配模板，支持区域裁剪和整屏回退。"""
+        if template_key not in self.templates:
+            return None
+
+        template = self.templates[template_key]
+        search_img = screenshot_cv
+        offset_x = 0
+        offset_y = 0
+
+        if region:
+            x, y, w, h = region
+            img_h, img_w = screenshot_cv.shape[:2]
+            x = max(0, min(x, img_w - 1))
+            y = max(0, min(y, img_h - 1))
+            w = max(1, min(w, img_w - x))
+            h = max(1, min(h, img_h - y))
+            search_img = screenshot_cv[y:y + h, x:x + w]
+            offset_x = x
+            offset_y = y
+
+        if (
+            search_img.shape[0] < template.shape[0]
+            or search_img.shape[1] < template.shape[1]
+        ):
+            return None
+
+        result = cv2.matchTemplate(search_img, template, cv2.TM_CCOEFF_NORMED)
+        _, max_val, _, max_loc = cv2.minMaxLoc(result)
+
+        if max_val < threshold:
+            return None
+
+        h, w = template.shape[:2]
+        center_x = offset_x + max_loc[0] + w // 2
+        center_y = offset_y + max_loc[1] + h // 2
+        return (center_x, center_y, max_val)
+
+    def _find_element(
+        self,
+        template_key: str,
+        timeout: float = 5.0,
+        threshold: float = 0.6,
+        prefer_region: bool = True,
+    ) -> tuple | None:
         """
         查找屏幕上的图像元素
 
@@ -330,6 +421,7 @@ class DazhongdianpAutoSignup:
             template_key: 模板键名
             timeout: 超时时间（秒）
             threshold: 匹配阈值（降低到 0.6 以适应不同屏幕）
+            prefer_region: 是否优先在局部区域搜索
 
         Returns:
             元素坐标 (x, y)，未找到返回 None
@@ -338,34 +430,51 @@ class DazhongdianpAutoSignup:
             logger.error(f"模板不存在：{template_key}")
             return None
 
-        template = self.templates[template_key]
         start_time = time.time()
+        search_region = self._build_search_region(template_key) if prefer_region else None
 
         while time.time() - start_time < timeout:
             try:
-                # 截取屏幕
                 screenshot = pyautogui.screenshot()
                 screenshot_cv = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+                matched = self._match_template(
+                    screenshot_cv,
+                    template_key,
+                    threshold=threshold,
+                    region=search_region,
+                )
+                if not matched and search_region:
+                    matched = self._match_template(
+                        screenshot_cv,
+                        template_key,
+                        threshold=threshold,
+                        region=None,
+                    )
 
-                # 模板匹配
-                result = cv2.matchTemplate(screenshot_cv, template, cv2.TM_CCOEFF_NORMED)
-                min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
-
-                if max_val >= threshold:
-                    logger.debug(f"找到元素 {template_key}: 位置={max_loc}, 置信度={max_val:.2f}")
-                    # 返回元素中心坐标
-                    h, w = template.shape[:2]
-                    center_x = max_loc[0] + w // 2
-                    center_y = max_loc[1] + h // 2
+                if matched:
+                    center_x, center_y, confidence = matched
+                    logger.debug(
+                        f"找到元素 {template_key}: 位置=({center_x}, {center_y}), 置信度={confidence:.2f}"
+                    )
                     return (center_x, center_y)
 
             except Exception as e:
                 logger.debug(f"查找元素失败：{e}")
 
-            time.sleep(0.5)
+            time.sleep(config.FIND_RETRY_INTERVAL)
 
         logger.warning(f"未找到元素：{template_key}")
         return None
+
+    def _find_list_free_lottery(self, timeout: Optional[float] = None) -> tuple | None:
+        """列表页快速查找“免费抽”，优先速度，必要时再整屏回退。"""
+        timeout = timeout or config.LIST_SCAN_TIMEOUT
+        return self._find_element(
+            "free_lottery",
+            timeout=timeout,
+            threshold=max(0.72, config.IMAGE_RECOGNITION_THRESHOLD - 0.05),
+            prefer_region=True,
+        )
 
     def _click_element(self, template_key: str, timeout: float = 5.0) -> bool:
         """
@@ -390,7 +499,7 @@ class DazhongdianpAutoSignup:
             return True
         return False
 
-    def _swipe_page(self) -> None:
+    def _swipe_page(self, recovery: bool = False) -> None:
         """
         向上滑动页面加载更多商品
 
@@ -404,16 +513,21 @@ class DazhongdianpAutoSignup:
         swipe_x = 200
         swipe_y = int(screen_height * 0.5)
 
-        # 随机决定滚动次数和每次滚动的量，模拟人的不规律操作
-        scroll_rounds = random.randint(4, 8)  # 滚动 4-8 轮
-        logger.info(f"滑动页面：移动到 ({swipe_x}, {swipe_y})，滚动 {scroll_rounds} 轮")
+        if recovery:
+            min_rounds, max_rounds = config.RECOVERY_SCROLL_ROUNDS
+            min_amount, max_amount = config.RECOVERY_SCROLL_AMOUNT
+        else:
+            min_rounds, max_rounds = config.PAGE_SCROLL_ROUNDS
+            min_amount, max_amount = config.PAGE_SCROLL_AMOUNT
+
+        scroll_rounds = random.randint(min_rounds, max_rounds)
+        action_name = "补偿滑动" if recovery else "滑动页面"
+        logger.info(f"{action_name}：移动到 ({swipe_x}, {swipe_y})，滚动 {scroll_rounds} 轮")
 
         for round in range(scroll_rounds):
-            # 每轮滚动 25-40 个单位（大幅增加滚动距离）
-            scroll_amount = random.randint(25, 40)
+            scroll_amount = random.randint(min_amount, max_amount)
             human_like_scroll(swipe_x, swipe_y, scroll_amount)
-            # 轮与轮之间随机停顿
-            time.sleep(random.uniform(0.15, 0.4))
+            time.sleep(random.uniform(0.04, 0.10))
 
     def _small_swipe(self) -> None:
         """
@@ -423,9 +537,9 @@ class DazhongdianpAutoSignup:
         swipe_x = 200
         swipe_y = int(screen_height * 0.5)
 
-        # 使用拟人化小幅度滚动
-        human_like_scroll(swipe_x, swipe_y, scroll_amount=random.randint(3, 6))
-        time.sleep(0.5)
+        min_amount, max_amount = config.SMALL_SCROLL_AMOUNT
+        human_like_scroll(swipe_x, swipe_y, scroll_amount=random.randint(min_amount, max_amount))
+        time.sleep(random.uniform(0.16, 0.28))
 
     def _is_on_free_meal_page(self) -> bool:
         """检查是否在霸王餐列表页"""
@@ -463,7 +577,7 @@ class DazhongdianpAutoSignup:
         logger.info(">>> 开始报名商品")
 
         # 步骤 1: 点击"免费抽"按钮
-        free_lottery_pos = self._find_element("free_lottery", timeout=5.0)
+        free_lottery_pos = self._find_list_free_lottery(timeout=2.5)
         if not free_lottery_pos:
             logger.error("未找到'免费抽'按钮")
             return False
@@ -551,7 +665,7 @@ class DazhongdianpAutoSignup:
         last_pos = None  # 记录上一次点击的位置，用于检测是否卡住
         first_item_processed = False  # 标记是否已处理第一个商品
 
-        while self.signup_count < limit and consecutive_no_find < 2:
+        while self.signup_count < limit:
             logger.info(f"\n--- 第 {swipe_count + 1} 页 ---")
 
             # 循环处理当前页的所有商品
@@ -560,16 +674,15 @@ class DazhongdianpAutoSignup:
                 if self.signup_count >= limit:
                     break
 
-                # 查找"免费抽"按钮（30 秒超时）
-                pos = self._find_element("free_lottery", timeout=30.0)
+                # 列表页优先快速扫描，避免无按钮时长时间空等
+                pos = self._find_list_free_lottery()
                 if pos:
                     # 检查是否和上一次位置相同（可能卡住了）
                     if last_pos and pos == last_pos:
                         logger.info(f"检测到重复位置 {pos}，小幅度滑动跳过...")
                         self._small_swipe()
-                        time.sleep(0.5)
                         # 重新查找
-                        pos = self._find_element("free_lottery", timeout=30.0)
+                        pos = self._find_list_free_lottery(timeout=config.LIST_RESCAN_TIMEOUT)
                         if pos and pos == last_pos:
                             logger.warning("仍然是相同位置，继续滑动...")
                             self._small_swipe()
@@ -590,16 +703,37 @@ class DazhongdianpAutoSignup:
                         # 失败后滑动一下，尝试下一个商品
                         logger.info("报名失败，滑动到下一个商品...")
                         self._small_swipe()
-                        time.sleep(0.5)
                 else:
-                    # 当前页没有更多商品了（30 秒内未找到）
+                    # 当前页没有更多商品了
                     logger.info(f"当前页已处理完，共 {page_items} 个商品")
                     break
 
             # 如果当前页没有处理任何商品，说明没有更多内容了
             if page_items == 0:
+                if self.signup_count < limit:
+                    if swipe_count >= config.MAX_SWIPE_COUNT:
+                        logger.info("已达到最大滑动次数，停止")
+                        break
+
+                    swipe_count += 1
+                    logger.info(f"当前页为空，先执行补偿滑动复查... (第 {swipe_count} 次)")
+                    self._swipe_page(recovery=True)
+
+                    recovery_pos = self._find_list_free_lottery(timeout=config.RECOVERY_SCAN_TIMEOUT)
+                    if recovery_pos:
+                        logger.info("补偿滑动后发现新商品，继续扫描")
+                        consecutive_no_find = 0
+                        last_pos = None
+                        continue
+
                 consecutive_no_find += 1
                 logger.warning(f"未找到商品 (连续 {consecutive_no_find} 次)")
+                if consecutive_no_find >= config.MAX_CONSECUTIVE_EMPTY_PAGES:
+                    logger.info("连续空页达到阈值，停止继续翻页")
+                    break
+                continue
+            else:
+                consecutive_no_find = 0
 
             # 如果达到最大滑动次数，退出
             if swipe_count >= config.MAX_SWIPE_COUNT:

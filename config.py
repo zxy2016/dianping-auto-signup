@@ -36,7 +36,7 @@ RECOVERY_SCAN_TIMEOUT = 3.0
 # 图像识别阈值（0-1，越高越严格）
 IMAGE_RECOGNITION_THRESHOLD = 0.8
 # 最大滑动次数（超过后认为没有更多商品）
-MAX_SWIPE_COUNT = 5
+MAX_SWIPE_COUNT = 20
 # 每页最大商品数
 MAX_ITEMS_PER_PAGE = 5
 # 连续多少个空页后才停止，避免快速扫描误判
